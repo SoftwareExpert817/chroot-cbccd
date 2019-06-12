@@ -1,0 +1,11 @@
+[cbccd_running]
+status = 1
+skipCheckFile = cbccd
+checkIntervall = 5
+failThreshold = 3
+type = processRunning
+processName = cbccd
+logEvent = notify
+logMessage = INFO-132
+triggerAction = cmd
+actionCmd = /var/mdw/scripts/cbccd restart

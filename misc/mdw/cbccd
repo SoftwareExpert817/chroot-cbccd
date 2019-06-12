@@ -1,0 +1,126 @@
+#!/bin/bash
+#
+#  Copyright (C) 2016 CholByok
+#  For copyright information look at http://www.cbcc.com
+#
+
+### BEGIN INIT INFO
+# Provides: CholByok Command Center Daemon
+# Required-Start: $network
+# Required-Stop: $network
+# Default-Start: 2 3
+# Default-Stop: 0 1 2 3 4 6
+# Description: Start the CholByok Command Center Daemon
+### END INIT INFO
+
+. /lib/lsb/init-functions
+
+# need to use full path to chroot
+# otherwise grep for proc/mount will fail
+CBCCD_CHROOT=/var/storage/chroot-cbccd
+
+PNAME="CBCC core daemon"
+INSTALL_PREFIX=""
+NOSELFM="/etc/no-selfmonitor/cbccd"
+
+OPEN_FILES_LIMIT=1024
+THREAD_STACK_SIZE=8192
+
+#CERT_FILE_NAMES="device_cert.pem device_key.pem user_cert.pem user_key.pem"
+
+function usage() {
+  echo "Usage: $0 [start|stop|status|try-restart|restart|force-reload|probe]"
+}
+
+# no args
+[ $# -lt 1 ] && usage && exit 1;
+
+rc_reset
+
+case "$1" in
+  (start)
+    echo -n ":: Starting $PNAME"
+    # check if certificates exist
+#    for certname in $CERT_FILE_NAMES; do
+#      if [ ! -s "$CBCCD_CHROOT/etc/cm/ssl/$certname" ] ; then
+#        echo " ... certificate(s) '$certname' not yet existing, deferring startup."
+#        rc_exit
+#      fi
+#    done
+    if checkproc $CBCCD_CHROOT/usr/sbin/cbccd; then
+      echo " ... already running, bailing out."
+      rc_exit
+    else
+      # clean temporary directory
+      rm -rf $CBCCD_CHROOT/tmp
+      # recreate temp directory
+      mkdir -m 1777 -p $CBCCD_CHROOT/tmp
+      # create proc mount dir
+      mkdir -p $CBCCD_CHROOT/proc
+      # Mount proc in chroot from outside
+      grep ${CBCCD_CHROOT}/proc /proc/mounts >/dev/null 2>&1
+      if [ $? == 1 ]; then
+          mount -t proc proc ${CBCCD_CHROOT}/proc >/dev/null 2>&1 || rc_failed
+      fi
+      # bind mount PGSQL database socket directory into chroot
+      grep ${CBCCD_CHROOT}/var/run/postgresql /proc/mounts >/dev/null 2>&1
+      if [ $? == 1 ]; then
+          mount -o bind /var/run/postgresql ${CBCCD_CHROOT}/var/run/postgresql >/dev/null 2>&1 || rc_failed
+      fi
+      # bind mount sessions directory
+      grep ${CBCCD_CHROOT}/var/storage/sessions /proc/mounts >/dev/null 2>&1
+      if [ $? == 1 ]; then
+          if [ ! -d /var/chroot-httpd/var/cbcc/var/sessions ]; then
+              mkdir -p /var/chroot-httpd/var/cbcc/var/sessions
+          fi
+          
+          mount -o bind ${CBCCD_CHROOT}/var/storage/sessions /var/chroot-httpd/var/cbcc/var/sessions >/dev/null 2>&1 || rc_failed
+      fi
+      ulimit -n $OPEN_FILES_LIMIT -s $THREAD_STACK_SIZE
+      startproc -c $CBCCD_CHROOT/ usr/sbin/cbccd 
+      rc_status -v
+    fi
+    rm -f $NOSELFM
+    ;;
+  (stop)
+    echo -n ":: Stopping $PNAME"
+    if checkproc $CBCCD_CHROOT/usr/sbin/cbccd; then
+      touch $NOSELFM
+      killproc $CBCCD_CHROOT/usr/sbin/cbccd >/dev/null 2>&1
+      rc_status -v
+    else
+      echo " ... already stopped, bailing out."
+      rc_exit
+    fi
+    # unmount proc/bind stuff in any case, ignoring errors
+    umount ${CBCCD_CHROOT}/proc/ >/dev/null 2>&1
+    umount ${CBCCD_CHROOT}/var/run/postgresql >/dev/null 2>&1
+    ;;
+  (try-restart)
+    $0 status >/dev/null &&  $0 restart
+    rc_status
+    ;;
+  (restart|force-reload)
+    echo -e ${attn}":: Restarting $PNAME"${norm}
+    $0 stop
+    $0 start
+    ;;
+  (status)
+    echo -n ":: Status $PNAME"
+    if checkproc $CBCCD_CHROOT/usr/sbin/cbccd ; then
+    rc_failed 0
+    else
+    rc_failed 1
+    fi
+    rc_status -v
+    ;;
+  (probe)
+    echo -n ":: Probe for reload of $PNAME"
+    rc_status -u
+    ;;
+  (*)
+    echo Unknown command "$1" for script \""$0"\"
+    usage
+    ;;
+esac
+rc_exit
